@@ -1,0 +1,595 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DFA Text Summarizer</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+
+    <style>
+        .state-row {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 18px;
+            margin: 25px 0;
+        }
+
+        .dfa-state {
+            width: 75px;
+            height: 75px;
+            border: 3px solid #a78bfa;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            background: #211638;
+            color: white;
+            transition: 0.15s;
+            position: relative;
+        }
+
+        .dfa-state.accepting {
+            outline: 3px double #a78bfa;
+            outline-offset: 4px;
+        }
+
+        .dfa-state.active {
+            background: #a78bfa;
+            color: #160c27;
+            border-color: white;
+            box-shadow: 0 0 22px #a78bfa;
+            transform: scale(1.12);
+        }
+
+        .arrow {
+            font-size: 25px;
+            color: #c4b5fd;
+        }
+
+        .result-card {
+            background: rgba(139, 92, 246, 0.12);
+            border: 1px solid rgba(167, 139, 250, 0.4);
+            border-radius: 14px;
+            padding: 20px;
+            margin: 20px 0;
+            overflow-wrap: anywhere;
+        }
+
+        .simulation-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin: 18px 0;
+        }
+
+        .simulation-buttons button {
+            padding: 10px 18px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        .simulation-buttons button:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+
+        .simulation-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 12px;
+            margin: 18px 0;
+        }
+
+        .info-box {
+            background: rgba(139, 92, 246, 0.12);
+            border: 1px solid rgba(167, 139, 250, 0.25);
+            padding: 14px;
+            border-radius: 10px;
+            overflow-wrap: anywhere;
+        }
+
+        .info-box strong {
+            display: block;
+            margin-bottom: 8px;
+            color: #c4b5fd;
+        }
+
+        .progress-track {
+            height: 10px;
+            background: #302342;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 12px 0;
+        }
+
+        .progress-fill {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #8b5cf6, #ec4899);
+            transition: width 0.05s linear;
+        }
+
+        .table-wrapper {
+            overflow-x: auto;
+            margin-top: 15px;
+        }
+
+        .transition-table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 500px;
+        }
+
+        .transition-table th,
+        .transition-table td {
+            padding: 10px;
+            text-align: center;
+            border: 1px solid rgba(167, 139, 250, 0.25);
+        }
+
+        .transition-table th {
+            background: rgba(139, 92, 246, 0.25);
+        }
+
+        .transition-table tr.current-row {
+            background: rgba(167, 139, 250, 0.3);
+            font-weight: bold;
+        }
+
+        .status-text {
+            font-weight: bold;
+            color: #c4b5fd;
+        }
+
+        .input-area {
+            width: 100%;
+            min-height: 180px;
+            box-sizing: border-box;
+            resize: vertical;
+        }
+
+        .main-button {
+            margin-top: 12px;
+            padding: 12px 22px;
+            border: none;
+            border-radius: 9px;
+            background: #8b5cf6;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .main-button:hover {
+            background: #7c3aed;
+        }
+
+        .error-message {
+            color: #fca5a5;
+            font-weight: bold;
+        }
+
+        .small-note {
+            opacity: 0.8;
+            font-size: 14px;
+        }
+
+        [hidden] {
+            display: none !important;
+        }
+    </style>
+</head>
+
+<body>
+    <main class="container">
+        <header>
+            <h1>DFA Text Summarizer</h1>
+            <p>Text Summarization using Finite Automata</p>
+        </header>
+
+        <section class="result-card">
+            <h2>Enter Your Text</h2>
+
+            <form action="/summarize" method="POST">
+                <textarea
+                    class="input-area"
+                    name="text"
+                    placeholder="Enter or paste your paragraph here..."
+                    required>{{ original_text | default('', true) }}</textarea>
+
+                <button class="main-button" type="submit">
+                    Summarize Text
+                </button>
+            </form>
+
+            {% if error %}
+                <p class="error-message">{{ error }}</p>
+            {% endif %}
+        </section>
+
+        {% if summary is defined and summary %}
+        <section class="result-card">
+            <h2>Generated Summary</h2>
+            <p>{{ summary }}</p>
+        </section>
+
+        <section class="result-card">
+            <h2>DFA State Diagram</h2>
+
+            <p>
+                DFA Type:
+                <strong>
+                    {% if dfa_pattern == "word" %}
+                        Word Pattern DFA
+                    {% else %}
+                        Sentence Pattern DFA
+                    {% endif %}
+                </strong>
+            </p>
+
+            <div class="state-row" id="stateDiagram">
+                {% for state in dfa_states %}
+                    {% if not loop.first %}
+                        <span class="arrow">→</span>
+                    {% endif %}
+
+                    <div
+                        class="dfa-state
+                        {% if state in ['q1', 'q2'] %}accepting{% endif %}"
+                        id="state-{{ state }}">
+                        {{ state }}
+                    </div>
+                {% endfor %}
+            </div>
+
+            <p class="small-note">
+                The highlighted state changes during the simulation.
+                Double outlines indicate accepting states.
+            </p>
+
+            <div class="simulation-info">
+                <div class="info-box">
+                    <strong>Start State</strong>
+                    <span>q0</span>
+                </div>
+
+                <div class="info-box">
+                    <strong>Current State</strong>
+                    <span id="currentState">q0</span>
+                </div>
+
+                <div class="info-box">
+                    <strong>Current Symbol</strong>
+                    <span id="currentSymbol">Not started</span>
+                </div>
+
+                <div class="info-box">
+                    <strong>Transition</strong>
+                    <span id="currentTransition">Not started</span>
+                </div>
+            </div>
+
+            <h3>Live DFA Simulation</h3>
+
+            <p>
+                Input Progress:
+                <strong>
+                    <span id="progressCount">0</span>
+                    /
+                    <span id="totalCount">0</span>
+                </strong>
+            </p>
+
+            <div class="progress-track">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+
+            <div class="simulation-buttons">
+                <button type="button" id="playButton" class="main-button">
+                    ▶ Play Simulation
+                </button>
+
+                <button type="button" id="nextButton" class="main-button">
+                    Next Step
+                </button>
+
+                <button type="button" id="resetButton" class="main-button">
+                    ↻ Reset
+                </button>
+            </div>
+
+            <p class="status-text" id="simulationStatus" aria-live="polite">
+                Ready to start simulation.
+            </p>
+
+            <p class="small-note">
+                Play automatically processes every input symbol.
+                You do not need to click Next Step repeatedly.
+            </p>
+
+            <h3>Final Result</h3>
+
+            <div class="simulation-info">
+                <div class="info-box">
+                    <strong>Final State</strong>
+                    <span id="finalState">{{ dfa_final_state }}</span>
+                </div>
+
+                <div class="info-box">
+                    <strong>Acceptance Status</strong>
+                    <span id="acceptanceStatus">Waiting for simulation</span>
+                </div>
+            </div>
+        </section>
+
+        <section class="result-card">
+            <h2>Transition History</h2>
+
+            <p class="small-note">
+                Each row represents one transition performed by the DFA.
+                The current row is highlighted during playback.
+            </p>
+
+            <div class="table-wrapper">
+                <table class="transition-table">
+                    <thead>
+                        <tr>
+                            <th>Step</th>
+                            <th>Input Symbol</th>
+                            <th>From State</th>
+                            <th>To State</th>
+                        </tr>
+                    </thead>
+
+                    <tbody id="historyBody">
+                        {% for item in dfa_history %}
+                        <tr id="history-{{ loop.index0 }}">
+                            <td>{{ item.position }}</td>
+                            <td>{{ item.symbol }}</td>
+                            <td>{{ item.from_state }}</td>
+                            <td>{{ item.to_state }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <script>
+            const states = {{ dfa_states | tojson }};
+            const history = {{ dfa_history | tojson }};
+            const finalState = {{ dfa_final_state | tojson }};
+            const accepted = {{ dfa_accepted | tojson }};
+
+            let currentIndex = 0;
+            let timer = null;
+            let isPlaying = false;
+
+            // Fast playback: 25 milliseconds per transition.
+            const animationSpeed = 25;
+
+            const playButton = document.getElementById("playButton");
+            const nextButton = document.getElementById("nextButton");
+            const resetButton = document.getElementById("resetButton");
+
+            const currentStateElement =
+                document.getElementById("currentState");
+            const currentSymbolElement =
+                document.getElementById("currentSymbol");
+            const currentTransitionElement =
+                document.getElementById("currentTransition");
+            const progressCount =
+                document.getElementById("progressCount");
+            const totalCount =
+                document.getElementById("totalCount");
+            const progressFill =
+                document.getElementById("progressFill");
+            const simulationStatus =
+                document.getElementById("simulationStatus");
+            const acceptanceStatus =
+                document.getElementById("acceptanceStatus");
+
+            totalCount.textContent = history.length;
+
+            function highlightState(stateName) {
+                states.forEach(function(state) {
+                    const element = document.getElementById(
+                        "state-" + state
+                    );
+
+                    if (element) {
+                        element.classList.toggle(
+                            "active",
+                            state === stateName
+                        );
+                    }
+                });
+            }
+
+            function updateProgress() {
+                progressCount.textContent = currentIndex;
+
+                const percentage = history.length === 0
+                    ? 0
+                    : (currentIndex / history.length) * 100;
+
+                progressFill.style.width = percentage + "%";
+            }
+
+            function clearCurrentRow() {
+                history.forEach(function(item, index) {
+                    const row = document.getElementById(
+                        "history-" + index
+                    );
+
+                    if (row) {
+                        row.classList.remove("current-row");
+                    }
+                });
+            }
+
+            function showFinalResult() {
+                currentStateElement.textContent = finalState;
+                document.getElementById("finalState").textContent =
+                    finalState;
+
+                acceptanceStatus.textContent = accepted
+                    ? "Accepted"
+                    : "Rejected";
+
+                simulationStatus.textContent =
+                    "Simulation completed! All transitions processed.";
+
+                highlightState(finalState);
+
+                playButton.disabled = true;
+                nextButton.disabled = true;
+                isPlaying = false;
+
+                if (timer !== null) {
+                    clearInterval(timer);
+                    timer = null;
+                }
+            }
+
+            function processNextStep() {
+                if (currentIndex >= history.length) {
+                    showFinalResult();
+                    return;
+                }
+
+                const item = history[currentIndex];
+
+                currentSymbolElement.textContent = item.symbol;
+
+                currentTransitionElement.textContent =
+                    item.from_state + " → " +
+                    item.symbol + " → " +
+                    item.to_state;
+
+                currentStateElement.textContent = item.to_state;
+
+                highlightState(item.to_state);
+
+                clearCurrentRow();
+
+                const row = document.getElementById(
+                    "history-" + currentIndex
+                );
+
+                if (row) {
+                    row.classList.add("current-row");
+
+                    // Keep the active transition visible during playback.
+                    if (isPlaying) {
+                        row.scrollIntoView({
+                            behavior: "auto",
+                            block: "nearest"
+                        });
+                    }
+                }
+
+                currentIndex++;
+                updateProgress();
+
+                simulationStatus.textContent =
+                    "Processing transition " + currentIndex +
+                    " of " + history.length;
+
+                if (currentIndex >= history.length) {
+                    showFinalResult();
+                }
+            }
+
+            function stopPlayback() {
+                if (timer !== null) {
+                    clearInterval(timer);
+                    timer = null;
+                }
+
+                isPlaying = false;
+                playButton.textContent = "▶ Play Simulation";
+            }
+
+            playButton.addEventListener("click", function() {
+                if (currentIndex >= history.length) {
+                    return;
+                }
+
+                if (isPlaying) {
+                    stopPlayback();
+                    simulationStatus.textContent = "Simulation paused.";
+                    playButton.disabled = false;
+                    return;
+                }
+
+                isPlaying = true;
+                playButton.textContent = "⏸ Pause Simulation";
+                simulationStatus.textContent = "Simulation running...";
+
+                // Run immediately, then continue automatically.
+                processNextStep();
+
+                if (currentIndex < history.length) {
+                    timer = setInterval(
+                        processNextStep,
+                        animationSpeed
+                    );
+                }
+            });
+
+            nextButton.addEventListener("click", function() {
+                if (isPlaying) {
+                    stopPlayback();
+                }
+
+                processNextStep();
+            });
+
+            resetButton.addEventListener("click", function() {
+                stopPlayback();
+
+                currentIndex = 0;
+
+                clearCurrentRow();
+                highlightState("q0");
+
+                currentStateElement.textContent = "q0";
+                currentSymbolElement.textContent = "Not started";
+                currentTransitionElement.textContent = "Not started";
+                progressCount.textContent = "0";
+                progressFill.style.width = "0%";
+
+                document.getElementById("finalState").textContent =
+                    finalState;
+
+                acceptanceStatus.textContent =
+                    "Waiting for simulation";
+
+                simulationStatus.textContent =
+                    "Simulation reset. Ready to start.";
+
+                playButton.disabled = history.length === 0;
+                nextButton.disabled = history.length === 0;
+                playButton.textContent = "▶ Play Simulation";
+            });
+
+            // Initial state before the user presses Play.
+            highlightState("q0");
+
+            if (history.length === 0) {
+                simulationStatus.textContent =
+                    "No transitions available.";
+                playButton.disabled = true;
+                nextButton.disabled = true;
+            }
+        </script>
+        {% endif %}
+    </main>
+</body>
+</html>
